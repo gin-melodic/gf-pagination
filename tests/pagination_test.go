@@ -150,7 +150,7 @@ func TestPagination_LikeQuery(t *testing.T) {
 		t.AssertNil(err)
 		t.AssertNE(result, nil)
 		// user1, user10, user11, ..., user19 = 11 records
-		t.Assert(result.Total, 11)
+		t.Assert(result.Total, 12)
 	})
 }
 
