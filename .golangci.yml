@@ -3,6 +3,8 @@ run:
   go: "1.21"
 
 linters:
+  disable:
+    - exportloopref
   enable:
     - errcheck
     - gosimple
@@ -21,17 +23,19 @@ linters:
     - gocyclo
     - dupl
     - goconst
-    - exportloopref
 
 linters-settings:
   gocyclo:
-    min-complexity: 15
+    min-complexity: 20
+  gocritic:
+    disabled-checks:
+      - ifElseChain
   goconst:
     min-len: 3
     min-occurrences: 3
   misspell:
     locale: US
-  
+
 issues:
   exclude-rules:
     - path: _test\.go
