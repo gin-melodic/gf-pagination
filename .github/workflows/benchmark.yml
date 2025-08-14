@@ -1,0 +1,137 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+    types: [labeled]
+
+jobs:
+  benchmark:
+    name: Performance Benchmark
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'benchmark') || github.event_name == 'push'
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: benchmark
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: "1.21"
+        cache: true
+        
+    - name: Setup benchmark database
+      run: |
+        mysql -h 127.0.0.1 -u root -proot -e "
+          CREATE DATABASE IF NOT EXISTS benchmark;
+          USE benchmark;
+          CREATE TABLE test_users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100),
+            email VARCHAR(100),
+            age INT,
+            status INT DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          INSERT INTO test_users (name, email, age, status) 
+          SELECT 
+            CONCAT('user', n), 
+            CONCAT('user', n, '@test.com'), 
+            20 + (n % 50), 
+            1 + (n % 3)
+          FROM (
+            SELECT a.N + b.N * 10 + c.N * 100 + d.N * 1000 as n
+            FROM 
+              (SELECT 0 as N UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) a,
+              (SELECT 0 as N UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) b,
+              (SELECT 0 as N UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) c,
+              (SELECT 0 as N UNION ALL SELECT 1) d
+          ) numbers 
+          WHERE n < 10000;
+        "
+        
+    - name: Run benchmarks
+      run: |
+        export DB_LINK="mysql:root:root@tcp(127.0.0.1:3306)/benchmark"
+        go test -bench=. -benchmem -run=^$ ./tests/ | tee benchmark.txt
+        
+    - name: Store benchmark result
+      uses: benchmark-action/github-action-benchmark@v1
+      with:
+        tool: 'go'
+        output-file-path: benchmark.txt
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        comment-on-pr: true
+        alert-threshold: '150%'
+        fail-on-alert: true
+
+  performance-regression:
+    name: Performance Regression Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout base
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.base_ref }}
+        path: base
+        
+    - name: Checkout PR
+      uses: actions/checkout@v4
+      with:
+        path: pr
+        
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: "1.21"
+        cache: true
+        
+    - name: Install benchstat
+      run: go install golang.org/x/perf/cmd/benchstat@latest
+      
+    - name: Run base benchmark
+      run: |
+        cd base
+        go test -bench=. -count=5 -run=^$ ./tests/ > ../base.txt
+        
+    - name: Run PR benchmark
+      run: |
+        cd pr  
+        go test -bench=. -count=5 -run=^$ ./tests/ > ../pr.txt
+        
+    - name: Compare benchmarks
+      run: |
+        benchstat base.txt pr.txt | tee comparison.txt
+        
+    - name: Comment PR
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const comparison = fs.readFileSync('comparison.txt', 'utf8');
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `## Benchmark Comparison\n\n\`\`\`\n${comparison}\n\`\`\``
+          });

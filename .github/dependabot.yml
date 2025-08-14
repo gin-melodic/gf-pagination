@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "gin-melodic"
+    assignees:
+      - "gin-melodic"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    
+  - package-ecosystem: "gomod"
+    directory: "/examples/basic"
+    schedule:
+      interval: "monthly"
+    
+  - package-ecosystem: "gomod"
+    directory: "/examples/gin_integration"
+    schedule:
+      interval: "monthly"
+      
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
