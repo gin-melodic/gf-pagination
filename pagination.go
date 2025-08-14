@@ -41,11 +41,12 @@ func (p *paginator) Paginate(ctx context.Context, req *Request, query *Query) (*
 	)
 
 	// 构建基础查询模型
-	if query.Model != nil {
+	switch {
+	case query.Model != nil:
 		model = query.Model
-	} else if query.Table != "" {
+	case query.Table != "":
 		model = db.Model(query.Table)
-	} else {
+	default:
 		return nil, gerror.New("table name or model cannot be empty")
 	}
 
@@ -63,10 +64,10 @@ func (p *paginator) Paginate(ctx context.Context, req *Request, query *Query) (*
 	}
 
 	// 处理分组和Having
-	if query.GroupBy != "" {
+	switch {
+	case query.GroupBy != "":
 		model = model.Group(query.GroupBy)
-	}
-	if query.Having != "" {
+	case query.Having != "":
 		model = model.Having(query.Having)
 	}
 
@@ -106,6 +107,48 @@ func (p *paginator) Paginate(ctx context.Context, req *Request, query *Query) (*
 	}, nil
 }
 
+// queryType represents the type of query condition
+type queryType int
+
+const (
+	queryEqual queryType = iota
+	queryLike
+	queryIn
+	queryNotIn
+	queryGt
+	queryGte
+	queryLt
+	queryLte
+	queryBetween
+	queryNull
+)
+
+// getQueryType determines the query type based on the field suffix
+func getQueryType(field string) (string, queryType) {
+	switch {
+	case strings.HasSuffix(field, "_like"):
+		return strings.TrimSuffix(field, "_like"), queryLike
+	case strings.HasSuffix(field, "_in"):
+		return strings.TrimSuffix(field, "_in"), queryIn
+	case strings.HasSuffix(field, "_not_in"):
+		return strings.TrimSuffix(field, "_not_in"), queryNotIn
+	case strings.HasSuffix(field, "_gt"):
+		return strings.TrimSuffix(field, "_gt"), queryGt
+	case strings.HasSuffix(field, "_gte"):
+		return strings.TrimSuffix(field, "_gte"), queryGte
+	case strings.HasSuffix(field, "_lt"):
+		return strings.TrimSuffix(field, "_lt"), queryLt
+	case strings.HasSuffix(field, "_lte"):
+		return strings.TrimSuffix(field, "_lte"), queryLte
+	case strings.HasSuffix(field, "_between"):
+		return strings.TrimSuffix(field, "_between"), queryBetween
+	case strings.HasSuffix(field, "_null"):
+		return strings.TrimSuffix(field, "_null"), queryNull
+	default:
+		return field, queryEqual
+	}
+}
+
 // BuildQuery 构建查询条件
 func (p *paginator) BuildQuery(ctx context.Context, model *gdb.Model, conditions map[string]interface{}) *gdb.Model {
 	if conditions == nil {
@@ -117,65 +160,62 @@ func (p *paginator) BuildQuery(ctx context.Context, model *gdb.Model, conditions
 			continue
 		}
 
-		switch {
-		case strings.HasSuffix(field, "_like"):
-			// 模糊查询
-			realField := strings.TrimSuffix(field, "_like")
-			model = model.Where(realField+" LIKE ?", "%"+gconv.String(value)+"%")
-
-		case strings.HasSuffix(field, "_in"):
-			// IN查询
-			realField := strings.TrimSuffix(field, "_in")
-			model = model.WhereIn(realField, value)
-
-		case strings.HasSuffix(field, "_not_in"):
-			// NOT IN查询
-			realField := strings.TrimSuffix(field, "_not_in")
-			model = model.WhereNotIn(realField, value)
-
-		case strings.HasSuffix(field, "_gt"):
-			// 大于
-			realField := strings.TrimSuffix(field, "_gt")
-			model = model.Where(realField+" > ?", value)
-
-		case strings.HasSuffix(field, "_gte"):
-			// 大于等于
-			realField := strings.TrimSuffix(field, "_gte")
-			model = model.Where(realField+" >= ?", value)
-
-		case strings.HasSuffix(field, "_lt"):
-			// 小于
-			realField := strings.TrimSuffix(field, "_lt")
-			model = model.Where(realField+" < ?", value)
-
-		case strings.HasSuffix(field, "_lte"):
-			// 小于等于
-			realField := strings.TrimSuffix(field, "_lte")
-			model = model.Where(realField+" <= ?", value)
-
-		case strings.HasSuffix(field, "_between"):
-			// BETWEEN查询
-			realField := strings.TrimSuffix(field, "_between")
-			if arr, ok := value.([]interface{}); ok && len(arr) == 2 {
-				model = model.Where(realField+" BETWEEN ? AND ?", arr[0], arr[1])
-			}
-
-		case strings.HasSuffix(field, "_null"):
-			// NULL查询
-			realField := strings.TrimSuffix(field, "_null")
-			if gconv.Bool(value) {
-				model = model.Where(realField + " IS NULL")
-			} else {
-				model = model.Where(realField + " IS NOT NULL")
-			}
-
-		default:
-			// 等值查询
-			model = model.Where(field, value)
-		}
+		realField, qType := getQueryType(field)
+		model = p.applyQueryType(model, realField, value, qType)
 	}
 
 	return model
+}
+
+// applyQueryType applies the appropriate query based on the query type
+func (p *paginator) applyQueryType(model *gdb.Model, field string, value interface{}, qType queryType) *gdb.Model {
+	switch qType {
+	case queryLike:
+		// 模糊查询
+		return model.Where(field+" LIKE ?", "%"+gconv.String(value)+"%")
+
+	case queryIn:
+		// IN查询
+		return model.WhereIn(field, value)
+
+	case queryNotIn:
+		// NOT IN查询
+		return model.WhereNotIn(field, value)
+
+	case queryGt:
+		// 大于
+		return model.Where(field+" > ?", value)
+
+	case queryGte:
+		// 大于等于
+		return model.Where(field+" >= ?", value)
+
+	case queryLt:
+		// 小于
+		return model.Where(field+" < ?", value)
+
+	case queryLte:
+		// 小于等于
+		return model.Where(field+" <= ?", value)
+
+	case queryBetween:
+		// BETWEEN查询
+		if arr, ok := value.([]interface{}); ok && len(arr) == 2 {
+			return model.Where(field+" BETWEEN ? AND ?", arr[0], arr[1])
+		}
+		return model
+
+	case queryNull:
+		// NULL查询
+		if gconv.Bool(value) {
+			return model.Where(field + " IS NULL")
+		}
+		return model.Where(field + " IS NOT NULL")
+
+	default:
+		// 等值查询
+		return model.Where(field, value)
+	}
 }
 
 // PaginateWithDB 使用指定数据库连接进行分页查询
